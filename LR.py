@@ -1,3 +1,12 @@
+'''
+LR.py by Jaron Thompson
+
+This script includes the BLR class for implementing Bayesian linear regression. Precision hyper-parameters are updated 
+based on the training data by maximizing the evidence function using scipy's fsolve. Also included is a GLR class for 
+implementing general linear regression.
+
+'''
+
 import numpy as np
 from scipy.optimize import fsolve
 
@@ -87,7 +96,7 @@ class BLR:
             # unpack precision parameters
             a, b = precision
 
-            # define non-linear equations for precision parameters
+            # define system of equations to compute precision parameters
             eqn_a = get_gamma(a, b) - a * np.dot(self.m_N(a, b), self.m_N(a, b))
             eqn_b = 1/b - (1/(self.NS - get_gamma(a, b))) * get_lsq(a, b)
 
