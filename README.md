@@ -3,6 +3,10 @@ Python implementation of methods described in "Pattern Recognition and Machine L
 
 Please see the 'Bayesian Linear Regression.ipynb' Jupyter Notebook tutorial which implements the BLR class from LR.py
 
+Example 1:
+
 ![Alt text](Figures/example_1.png?raw=true "Linear basis example")
+
+Example 2:
 
 ![Alt text](Figures/example_2.png?raw=true "Non-linear basis example")
