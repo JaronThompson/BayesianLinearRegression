@@ -1,111 +1,72 @@
 '''
 LR.py by Jaron Thompson
 
-This script includes the BLR class for implementing Bayesian linear regression. Precision hyper-parameters are updated 
-based on the training data by maximizing the evidence function using scipy's fsolve. Also included is a GLR class for 
-implementing general linear regression.
+This script includes the BLR class for implementing Bayesian linear regression.
+Precision hyper-parameters are updated based on the training data by maximizing
+the evidence function using the Expecation-Maximization algorithm.
+
+Also included is a GLR class for general linear regression.
 
 '''
-
 import numpy as np
-from scipy.optimize import fsolve
+
+### Bayesian Linear Regression model ###
 
 class BLR:
 
-    def __init__(self, X, Y, a=.05, b=.05, max_evidence=False):
-
+    def __init__(self, X, Y, alpha=1e-3, beta=1.0, tol=1e-3):
         self.X = X
-        self.Y = Y
-        self.NS, self.NF = X.shape
+        self.Y = Y.ravel()
 
-        if max_evidence:
-            if self.NS > 4*self.NF:
-                self.a, self.b = self.estimate_precision(a, b)
-            else:
-                self.a, self.b = self.precision(a, b)
+        # number of samples and basis functions
+        self.n_samples, self.n_basis = X.shape
 
+        # hyper parameters
+        self.alpha = alpha*np.ones(self.n_basis)
+        self.beta  = beta
 
-    def S_N(self, a, b):
-        return np.linalg.inv(a*np.eye(self.NF) + b * np.dot(self.X.T, self.X))
+        # parameters of hyper-prior
+        self.a = 1e-4
 
-    def m_N(self, a, b):
-        return b * np.dot(np.dot(self.S_N(a, b), self.X.T), self.Y)
+        # convergence tolerance
+        self.tol = tol
 
-    def predict(self, x):
+    def fit(self):
+        convergence = np.inf
+        prev_evidence = 0
+        while convergence > self.tol:
+            # E step
+            A = self.alpha*np.eye(self.n_basis) + self.beta*self.X.T@self.X
+            self.Ainv = np.linalg.inv(A)
+            self.Ainv = 1/2*(self.Ainv + self.Ainv.T)
+            self.mu = self.beta*self.Ainv@self.X.T@self.Y
+            Y_pred = self.X@self.mu
+            self.SSE = np.sum((Y_pred - self.Y)**2)
 
-        estimate = np.dot(self.m_N(self.a, self.b).T, x.T)
-        variance = 1/self.b + np.dot(np.dot(x, self.S_N(self.a, self.b)), x.T)
+            # M step
+            gamma = np.sum(1. - self.alpha*np.diag(self.Ainv))
+            # gamma = self.n_basis - self.alpha*np.trace(self.Ainv)
+            self.alpha = np.ones(self.n_basis) * (1. + self.a) / (np.dot(self.mu,self.mu) + np.trace(self.Ainv) + self.a)
+            # self.alpha = (self.n_basis + self.a) / (np.dot(self.mu, self.mu) + np.trace(self.Ainv) + self.a)
+            self.beta  = (self.n_samples + self.a) / (self.SSE + gamma/self.beta + self.a)
 
-        return estimate, variance
+            # evaluate convergence
+            current_evidence = self.evidence()
+            print("Evidence: {:.3f}".format(current_evidence))
+            convergence = np.abs(prev_evidence - current_evidence) / np.max([1,np.abs(prev_evidence)])
+            prev_evidence = current_evidence
 
-    def estimate_precision(self, a, b):
-        print('NS >> NF: Using maximum evidence approximation.')
-        def E_W(w):
-            # where w is a column vector
-            w = np.vstack(w)
-            return .5 * np.dot(w.T, w)[0]
+    def evidence(self):
+        ev = np.sum(np.log(np.linalg.eigvalsh(self.Ainv))) + \
+             np.sum(np.log(self.alpha)) + \
+             self.n_samples*np.log(self.beta) - self.beta*self.SSE - \
+             np.dot(self.alpha*self.mu, self.mu)
+        return ev/2.
 
-        def E_D(w):
-            # where w is a column vector
-            w = np.vstack(w)
-            ed = 0
-            for i in range(self.NS):
-                ed += (self.Y[i] - np.dot(w.T, self.X[i, :]))**2
-            return .5 * ed[0]
-
-        def system(precision):
-            # define precision parameters
-            a, b = precision
-
-            # define system of equations
-
-            # eqn for alpha
-            eqn_a = a*2*E_W(self.m_N(a, b)) - self.NF
-
-            # eqn for beta
-            eqn_b = b*2*E_D(self.m_N(a, b)) - self.NS
-
-            return (eqn_a, eqn_b)
-
-        initial_guess = (a, b)
-        a_max, b_max = fsolve(system, initial_guess)
-
-        return a_max, b_max
-
-    def precision(self, a, b):
-        print("attempting to maximize evidence function")
-        # get eigenvalues of (beta * X.T * X) u = eig * u
-        def get_eigenvalues(b):
-            eigenvalues, eigenbasis = np.linalg.eig(b*np.dot(self.X.T, self.X))
-            return eigenvalues
-
-        def get_gamma(a, b):
-            eigenvalues = get_eigenvalues(b)
-            gamma = 0
-            for eigenvalue in eigenvalues:
-                gamma += eigenvalue/(a + eigenvalue)
-            return gamma
-
-        def get_lsq(a, b):
-            lsq = 0
-            for i in range(self.NS):
-                lsq += (self.Y[i] - np.dot(self.m_N(a, b), self.X[i, :]))**2
-            return lsq
-
-        def system(precision):
-            # unpack precision parameters
-            a, b = precision
-
-            # define system of equations to compute precision parameters
-            eqn_a = get_gamma(a, b) - a * np.dot(self.m_N(a, b), self.m_N(a, b))
-            eqn_b = 1/b - (1/(self.NS - get_gamma(a, b))) * get_lsq(a, b)
-
-            return (eqn_a, eqn_b)
-
-        initial_guess = (a, b)
-        a_max, b_max = fsolve(system, initial_guess)
-
-        return a_max, b_max
+    def predict(self, X):
+        y_pred = X@self.mu
+        y_var  = 1/self.beta + np.einsum('ni,ij,nj->n', X, self.Ainv, X)
+        return y_pred, np.sqrt(y_var)
 
 class GLR:
 
