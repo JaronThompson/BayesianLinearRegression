@@ -9,6 +9,10 @@ Also included is a GLR class for general linear regression.
 
 '''
 import numpy as np
+import numpyro
+import numpyro.distributions as dist
+from numpyro.infer import MCMC, NUTS
+from jax import random, jit
 
 ### Bayesian Linear Regression model ###
 
@@ -21,8 +25,12 @@ class BLR:
         # number of samples and basis functions
         self.n_samples, self.n_basis = X.shape
 
+        # initialize model parameters
+        self.mu = np.zeros(self.n_basis)
+
         # hyper parameters
         self.alpha = alpha*np.ones(self.n_basis)
+        self.A = np.diag(self.alpha)
         self.beta  = beta
 
         # parameters of hyper-prior
@@ -36,8 +44,8 @@ class BLR:
         prev_evidence = 0
         while convergence > self.tol:
             # E step
-            A = self.alpha*np.eye(self.n_basis) + self.beta*self.X.T@self.X
-            self.Ainv = np.linalg.inv(A)
+            self.A = self.alpha*np.eye(self.n_basis) + self.beta*self.X.T@self.X
+            self.Ainv = np.linalg.inv(self.A)
             self.Ainv = 1/2*(self.Ainv + self.Ainv.T)
             self.mu = self.beta*self.Ainv@self.X.T@self.Y
             Y_pred = self.X@self.mu
@@ -46,9 +54,9 @@ class BLR:
             # M step
             gamma = np.sum(1. - self.alpha*np.diag(self.Ainv))
             # gamma = self.n_basis - self.alpha*np.trace(self.Ainv)
-            self.alpha = np.ones(self.n_basis) * (1. + self.a) / (np.dot(self.mu,self.mu) + np.trace(self.Ainv) + self.a)
-            # self.alpha = (self.n_basis + self.a) / (np.dot(self.mu, self.mu) + np.trace(self.Ainv) + self.a)
-            self.beta  = (self.n_samples + self.a) / (self.SSE + gamma/self.beta + self.a)
+            self.alpha = np.ones(self.n_basis) / (self.mu**2 + np.diag(self.Ainv) + self.a)
+            #self.alpha = (self.n_basis) / (np.dot(self.mu, self.mu) + np.trace(self.Ainv) + self.a)
+            self.beta  = (self.n_samples) / (self.SSE + gamma/self.beta + self.a)
 
             # evaluate convergence
             current_evidence = self.evidence()
@@ -63,10 +71,29 @@ class BLR:
              np.dot(self.alpha*self.mu, self.mu)
         return ev/2.
 
+    def fit_MCMC(self, num_warmup=1000, num_samples=3000, rng_key=0):
+        # define probabilistic model
+        predict = jit(lambda X,mu: X@mu)
+        def model(X, y):
+            # parameter random variable
+            mu = numpyro.sample('mu', dist.MultivariateNormal(loc=self.mu, precision_matrix=self.A))
+            # likelihood
+            L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=1/self.beta), obs=y)
+        # instantiate MCMC object with NUTS kernel
+        mcmc = MCMC(NUTS(model), num_warmup=num_warmup, num_samples=num_samples)
+        mcmc.run(random.PRNGKey(rng_key), self.X, self.Y)
+        # save posterior samples
+        self.posterior_params = np.array(mcmc.get_samples()['mu'])
+
     def predict(self, X):
         y_pred = X@self.mu
         y_var  = 1/self.beta + np.einsum('ni,ij,nj->n', X, self.Ainv, X)
         return y_pred, np.sqrt(y_var)
+
+    def predict_MCMC(self, X):
+        y_preds  = np.einsum('ni,si->sn', X, self.posterior_params)
+        y_preds += np.random.randn(y_preds.shape[0], y_preds.shape[1])*(1/self.beta)**.5
+        return np.mean(y_preds, 0), np.std(y_preds, 0)
 
 class GLR:
 
