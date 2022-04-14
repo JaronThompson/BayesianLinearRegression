@@ -71,19 +71,21 @@ class BLR:
              np.dot(self.alpha*self.mu, self.mu)
         return ev/2.
 
-    def fit_MCMC(self, num_warmup=1000, num_samples=3000, rng_key=0):
+    def fit_MCMC(self, num_warmup=500, num_samples=1000, rng_key=0):
         # define probabilistic model
         predict = jit(lambda X,mu: X@mu)
+
         def model(X, y):
             # parameter random variable
-            mu = numpyro.sample('mu', dist.MultivariateNormal(loc=self.mu, precision_matrix=self.A))
+            mu = numpyro.sample('mu', dist.MultivariateNormal(loc=self.mu, covariance_matrix=self.Ainv))
             # likelihood
-            L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=1/self.beta), obs=y)
+            L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=(1./self.beta)**.5), obs=y)
         # instantiate MCMC object with NUTS kernel
-        mcmc = MCMC(NUTS(model), num_warmup=num_warmup, num_samples=num_samples)
-        mcmc.run(random.PRNGKey(rng_key), self.X, self.Y)
+        self.mcmc = MCMC(NUTS(model), num_warmup=num_warmup, num_samples=num_samples)
+        self.mcmc.warmup(random.PRNGKey(rng_key), self.X, self.Y, init_params=self.mu)
+        self.mcmc.run(random.PRNGKey(rng_key), self.X, self.Y, init_params=self.mu)
         # save posterior samples
-        self.posterior_params = np.array(mcmc.get_samples()['mu'])
+        self.posterior_params = np.array(self.mcmc.get_samples()['mu'])
 
     def predict(self, X):
         y_pred = X@self.mu
