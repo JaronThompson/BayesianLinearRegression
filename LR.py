@@ -31,10 +31,12 @@ class BLR:
         # hyper parameters
         self.alpha = alpha*np.ones(self.n_basis)
         self.A = np.diag(self.alpha)
+        self.Ainv = None
         self.beta  = beta
 
         # parameters of hyper-prior
         self.a = 1e-4
+        self.b = 1e-4
 
         # convergence tolerance
         self.tol = tol
@@ -56,7 +58,7 @@ class BLR:
             # gamma = self.n_basis - self.alpha*np.trace(self.Ainv)
             self.alpha = np.ones(self.n_basis) / (self.mu**2 + np.diag(self.Ainv) + self.a)
             #self.alpha = (self.n_basis) / (np.dot(self.mu, self.mu) + np.trace(self.Ainv) + self.a)
-            self.beta  = (self.n_samples) / (self.SSE + gamma/self.beta + self.a)
+            self.beta  = (self.n_samples) / (self.SSE + gamma/self.beta + self.b)
 
             # evaluate convergence
             current_evidence = self.evidence()
@@ -76,10 +78,21 @@ class BLR:
         predict = jit(lambda X,mu: X@mu)
 
         def model(X, y):
-            # parameter random variable
-            mu = numpyro.sample('mu', dist.MultivariateNormal(loc=self.mu, covariance_matrix=self.Ainv))
-            # likelihood
-            L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=(1./self.beta)**.5), obs=y)
+            if self.Ainv is None:
+                # sample parameters
+                with numpyro.plate("weights", self.n_basis):
+                    alpha = numpyro.sample("alpha", dist.Exponential(rate=self.a))
+                    mu = numpyro.sample("mu", dist.Normal(loc=0., scale=(1./alpha)**.5))
+
+                # sample likelihood
+                beta = numpyro.sample("beta", dist.Exponential(rate=self.b))
+                L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=(1./beta)**.5), obs=y)
+            else:
+                # sample parameters
+                mu = numpyro.sample('mu', dist.MultivariateNormal(loc=self.mu, covariance_matrix=self.Ainv))
+                # sample likelihood
+                L = numpyro.sample('y', dist.Normal(loc=predict(X,mu), scale=(1./self.beta)**.5), obs=y)
+
         # instantiate MCMC object with NUTS kernel
         self.mcmc = MCMC(NUTS(model), num_warmup=num_warmup, num_samples=num_samples)
         self.mcmc.warmup(random.PRNGKey(rng_key), self.X, self.Y, init_params=self.mu)
