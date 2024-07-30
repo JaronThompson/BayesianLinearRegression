@@ -1,6 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
-from jax import jit
+from jax import jit, random
 from functools import partial
 
 
@@ -11,6 +11,10 @@ def GMG(G, M):
     # return G @ M @ G.T
     return jnp.einsum("ni,ij,nj", G, M, G)
 
+
+@jit
+def update_precision(alpha, beta, X):
+    return alpha * jnp.eye(len(alpha)) + beta * jnp.einsum("ni,nj->ij", X, X)
 
 @jit
 def update_covariance(alpha, beta, X):
